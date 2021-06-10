@@ -1,0 +1,10 @@
+{
+    "name": "nedim/aws_lightsail",
+    "authors": [
+        {
+            "name": "Nedim Hadzimahmutovic",
+            "email": "my@email.com"
+        }
+    ],
+    "require": {}
+}

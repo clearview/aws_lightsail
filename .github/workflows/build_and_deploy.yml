@@ -1,0 +1,126 @@
+name: Dev - Build and deploy Docker to AWS Lightsail Container Service
+
+on:
+  push:
+   branches:
+     - main
+
+jobs:
+  build_and_deploy_to_lightsail_container_service:
+    runs-on: ubuntu-latest
+
+    env:
+      SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+      DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+
+    steps:
+
+    - uses: actions/checkout@master
+
+    - name: Upgrade AWS CLI version and setup lightsailctl
+      run: |
+       aws --version
+       curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+       unzip awscliv2.zip
+       sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+       which aws
+       aws --version
+       sudo curl "https://s3.us-west-2.amazonaws.com/lightsailctl/latest/linux-amd64/lightsailctl" -o "/usr/local/bin/lightsailctl"
+       sudo chmod +x /usr/local/bin/lightsailctl
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Build Docker PHP Image
+      run: >
+        docker build .
+        --file ./infra/Dockerfile.php
+        --tag php:latest
+
+    - name: Build Docker NginX Image
+      run: >
+        docker build .
+        --file ./infra/Dockerfile.nginx
+        --tag nginx:latest
+
+    - name: List the Docker Images and Tags
+      run: |
+        docker images list
+
+    - name: Push the Docker PHP Image
+      run: >
+        aws lightsail push-container-image
+        --service-name ${{ env.SERVICE_NAME }}
+        --label php
+        --image php:latest
+
+    - name: Push the Docker NginX Image
+      run: >
+        aws lightsail push-container-image
+        --service-name ${{ env.SERVICE_NAME }}
+        --label nginx
+        --image nginx:latest
+
+    - name: Get the Docker Images from Lightsail
+      run: >
+        aws lightsail get-container-images
+        --service-name ${{ env.SERVICE_NAME }}
+
+    - name: Get the Latest NginX Docker Images from Lightsail
+      run: >
+        aws lightsail get-container-images
+        --service-name ${{ env.SERVICE_NAME }} |
+        jq --arg NGINX_DOCKER_IMAGE "$NGINX_DOCKER_IMAGE" '.containerImages[] |
+        select(.image | startswith($NGINX_DOCKER_IMAGE))'
+      env:
+        NGINX_DOCKER_IMAGE: ":${{env.SERVICE_NAME}}.nginx"
+
+    - name: Get the Latest PHP Docker Images from Lightsail
+      run: >
+        aws lightsail get-container-images --service-name ${{ env.SERVICE_NAME }} |
+        jq --arg PHP_DOCKER_IMAGE "$PHP_DOCKER_IMAGE" '.containerImages[] |
+        select(.image | startswith($PHP_DOCKER_IMAGE))'
+      env:
+        PHP_DOCKER_IMAGE: ":${{env.SERVICE_NAME}}.php"
+
+    - name: Get the latest PHP Docker Image from Lightsail
+      run: >
+        echo "LATEST_PHP_LIGHTSAIL_DOCKER_IMAGE=$(aws lightsail get-container-images --service-name ${{ env.SERVICE_NAME }} | jq -r '.containerImages | map(select(.image | contains ("php") )) | .[0].image')" >> $GITHUB_ENV
+
+    - name: Get the latest NGINX Docker Image from Lightsail
+      run: >
+        echo "LATEST_NGINX_LIGHTSAIL_DOCKER_IMAGE=$(aws lightsail get-container-images --service-name ${{ env.SERVICE_NAME }} | jq -r '.containerImages | map(select(.image | contains ("nginx") )) | .[0].image')" >> $GITHUB_ENV
+
+    - name: Test value of LATEST_PHP_LIGHTSAIL_DOCKER_IMAGE and LATEST_NGINX_LIGHTSAIL_DOCKER_IMAGE var
+      run: |
+        echo $LATEST_NGINX_LIGHTSAIL_DOCKER_IMAGE
+        echo $LATEST_PHP_LIGHTSAIL_DOCKER_IMAGE
+
+    - name: Create container_with_image.yml
+      run: |
+        cat .github/workflows/container.yml.tpl | envsubst > container_with_image.yml
+        cat container_with_image.yml
+
+    - name: Deploy to Lightsail
+      run: >
+        aws lightsail create-container-service-deployment
+        --cli-input-yaml file://container_with_image.yml
+        --output yaml
+
+    - name: Debug PHP container logs
+      run: >
+        aws lightsail get-container-log
+        --service-name ${{ env.SERVICE_NAME }}
+        --container-name php
+        --output yaml
+
+    - name: Debug NginX container logs
+      run: >
+        aws lightsail get-container-log
+        --service-name ${{ env.SERVICE_NAME }}
+        --container-name php
+        --output yaml

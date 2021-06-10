@@ -1,0 +1,12 @@
+FROM nginx as nginx
+
+WORKDIR /app
+
+COPY infra/nginx/nginx.conf /etc/nginx
+COPY infra/nginx/default.conf /etc/nginx/conf.d
+COPY infra/nginx/gzip.conf /etc/nginx/conf.d
+COPY infra/nginx/proxy_params.conf /etc/nginx/conf.d
+COPY infra/nginx/size_limits.conf /etc/nginx/conf.d
+COPY infra/nginx/timeouts.conf /etc/nginx/conf.d
+
+COPY . .
